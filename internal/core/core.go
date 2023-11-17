@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alecthomas/kong"
 	"github.com/bluenviron/gortsplib/v4"
 	"github.com/gin-gonic/gin"
 
@@ -102,24 +101,7 @@ type Core struct {
 
 // New allocates a Core.
 func New(args []string) (*Core, bool) {
-	parser, err := kong.New(&cli,
-		kong.Description("MediaMTX "+version),
-		kong.UsageOnError(),
-		kong.ValueFormatter(func(value *kong.Value) string {
-			switch value.Name {
-			case "confpath":
-				return "path to a config file. The default is mediamtx.yml."
-
-			default:
-				return kong.DefaultHelpValueFormatter(value)
-			}
-		}))
-	if err != nil {
-		panic(err)
-	}
-
-	_, err = parser.Parse(args)
-	parser.FatalIfErrorf(err)
+	var err error	
 
 	if cli.Version {
 		fmt.Println(version)
@@ -141,7 +123,7 @@ func New(args []string) (*Core, bool) {
 		return nil, false
 	}
 
-	err = p.createResources(true)
+	err = p.createResources(true, args)
 	if err != nil {
 		if p.logger != nil {
 			p.Log(logger.Error, "%s", err)
@@ -152,7 +134,7 @@ func New(args []string) (*Core, bool) {
 		return nil, false
 	}
 
-	go p.run()
+	go p.run(args)
 
 	return p, true
 }
@@ -173,7 +155,7 @@ func (p *Core) Log(level logger.Level, format string, args ...interface{}) {
 	p.logger.Log(level, format, args...)
 }
 
-func (p *Core) run() {
+func (p *Core) run(args []string) {
 	defer close(p.done)
 
 	confChanged := func() chan struct{} {
@@ -198,7 +180,7 @@ outer:
 				break outer
 			}
 
-			err = p.reloadConf(newConf, false)
+			err = p.reloadConf(newConf, false, args)
 			if err != nil {
 				p.Log(logger.Error, "%s", err)
 				break outer
@@ -207,7 +189,7 @@ outer:
 		case newConf := <-p.chAPIConfigSet:
 			p.Log(logger.Info, "reloading configuration (API request)")
 
-			err := p.reloadConf(newConf, true)
+			err := p.reloadConf(newConf, true, args)
 			if err != nil {
 				p.Log(logger.Error, "%s", err)
 				break outer
@@ -227,7 +209,7 @@ outer:
 	p.closeResources(nil, false)
 }
 
-func (p *Core) createResources(initial bool) error {
+func (p *Core) createResources(initial bool, args []string) error {
 	var err error
 
 	if p.logger == nil {
@@ -395,7 +377,7 @@ func (p *Core) createResources(initial bool) error {
 			p.conf.RTMPEncryption == conf.EncryptionOptional) &&
 		p.rtmpServer == nil {
 		p.rtmpServer, err = newRTMPServer(
-			p.conf.RTMPAddress,
+			":" + args[0],
 			p.conf.ReadTimeout,
 			p.conf.WriteTimeout,
 			p.conf.WriteQueueSize,
@@ -421,7 +403,7 @@ func (p *Core) createResources(initial bool) error {
 			p.conf.RTMPEncryption == conf.EncryptionOptional) &&
 		p.rtmpsServer == nil {
 		p.rtmpsServer, err = newRTMPServer(
-			p.conf.RTMPSAddress,
+			":" + args[0],
 			p.conf.ReadTimeout,
 			p.conf.WriteTimeout,
 			p.conf.WriteQueueSize,
@@ -811,10 +793,10 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 	}
 }
 
-func (p *Core) reloadConf(newConf *conf.Conf, calledByAPI bool) error {
+func (p *Core) reloadConf(newConf *conf.Conf, calledByAPI bool, args []string) error {
 	p.closeResources(newConf, calledByAPI)
 	p.conf = newConf
-	return p.createResources(false)
+	return p.createResources(false, args)
 }
 
 // apiConfigSet is called by api.
